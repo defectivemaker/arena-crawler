@@ -178,10 +178,12 @@ func (s *Store) DequeueNext(ctx context.Context) (QueueItem, bool, error) {
 WITH next_item AS (
   SELECT cs.slug, cs.depth
   FROM crawl_state cs
-  LEFT JOIN crawl_profiles cp ON cp.slug = cs.slug
-  WHERE status = 'queued'
-    AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-  ORDER BY cs.depth ASC, COALESCE(cp.followers_count, 0) DESC, cs.last_enqueued_at ASC
+  WHERE cs.status = 'queued'
+    AND (cs.next_retry_at IS NULL OR cs.next_retry_at <= NOW())
+  ORDER BY
+    cs.depth ASC,
+    COALESCE((SELECT cp.followers_count FROM crawl_profiles cp WHERE cp.slug = cs.slug), 0) DESC,
+    cs.last_enqueued_at ASC
   LIMIT 1
   FOR UPDATE SKIP LOCKED
 )
