@@ -1,0 +1,9 @@
+# Logs
+*.log
+
+# Go binaries/build outputs
+bin/
+*.out
+
+# OS files
+.DS_Store
