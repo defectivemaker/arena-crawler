@@ -58,8 +58,8 @@ export ARENA_TOKEN='your_arena_bearer_token'
 
 go run ./cmd/crawl \
   -seed leticia-de-cassia \
-  -max-depth 2 \
-  -max-users 2000 \
+  -max-depth -1 \
+  -max-users -1 \
   -request-limit-per-minute 30 \
   -per-page 100
 ```
@@ -71,8 +71,11 @@ go run ./cmd/crawl \
 - `processing` -> currently being processed
 - `done` -> already crawled
 - `failed` -> will retry after `next_retry_at`
+- dequeue priority: lower depth first, then higher `followers_count`, then older queue time
 
 Useful flags:
+- `-max-depth` (default `-1`): follower recursion depth, unlimited when `-1`.
+- `-max-users` (default `-1`): process cap per run, unlimited when `-1`.
 - `-recrawl-after-hours` (default `720`): if `done` is older than this, it can be re-queued.
 - `-retry-delay-minutes` (default `30`): backoff for failures.
 - `-recover-processing-after-minutes` (default `30`): recovers stuck `processing` rows on startup.

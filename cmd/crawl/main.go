@@ -22,8 +22,8 @@ var (
 
 func main() {
 	seed := flag.String("seed", "", "Comma-separated seed user slugs (optional if queue already populated)")
-	maxDepth := flag.Int("max-depth", 2, "Follower recursion depth")
-	maxUsers := flag.Int("max-users", 1000, "Maximum users to process in this run")
+	maxDepth := flag.Int("max-depth", -1, "Follower recursion depth (-1 = unlimited)")
+	maxUsers := flag.Int("max-users", -1, "Maximum users to process in this run (-1 = unlimited)")
 	perPage := flag.Int("per-page", 100, "Followers page size")
 	dsn := flag.String("dsn", os.Getenv("DATABASE_URL"), "Target Postgres DSN")
 	token := flag.String("token", os.Getenv("ARENA_TOKEN"), "Are.na bearer token (optional)")
@@ -93,7 +93,7 @@ func main() {
 	failed := 0
 	profileFetches := 0
 
-	for processed < *maxUsers {
+	for *maxUsers < 0 || processed < *maxUsers {
 		item, ok, err := store.DequeueNext(ctx)
 		if err != nil {
 			log.Fatalf("dequeue: %v", err)
@@ -143,7 +143,7 @@ func main() {
 			}
 		}
 
-		if item.Depth < *maxDepth {
+		if *maxDepth < 0 || item.Depth < *maxDepth {
 			followers, err := client.GetFollowers(ctx, item.Slug, *perPage)
 			if err != nil {
 				failed++
