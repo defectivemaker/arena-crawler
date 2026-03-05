@@ -27,6 +27,12 @@ type QueueItem struct {
 	Attempts int
 }
 
+type ProfileCounts struct {
+	Followers int
+	Following int
+	Channels  int
+}
+
 func Open(dsn string) (*Store, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -166,7 +172,10 @@ WHERE status = 'processing' AND (last_attempt_at IS NULL OR last_attempt_at < $1
 	return n, nil
 }
 
-func (s *Store) DequeueNext(ctx context.Context) (QueueItem, bool, error) {
+func (s *Store) DequeueNext(ctx context.Context, edgeSource string) (QueueItem, bool, error) {
+	if edgeSource != "following" && edgeSource != "followers" && edgeSource != "auto" {
+		edgeSource = "followers"
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return QueueItem{}, false, err
@@ -181,8 +190,16 @@ WITH next_item AS (
   WHERE cs.status = 'queued'
     AND (cs.next_retry_at IS NULL OR cs.next_retry_at <= NOW())
   ORDER BY
+    COALESCE((
+      SELECT CASE
+        WHEN $1 = 'following' THEN cp.following_count
+        WHEN $1 = 'followers' THEN cp.followers_count
+        ELSE GREATEST(cp.following_count, cp.followers_count)
+      END
+      FROM crawl_profiles cp
+      WHERE cp.slug = cs.slug
+    ), 0) DESC,
     cs.depth ASC,
-    COALESCE((SELECT cp.followers_count FROM crawl_profiles cp WHERE cp.slug = cs.slug), 0) DESC,
     cs.last_enqueued_at ASC
   LIMIT 1
   FOR UPDATE SKIP LOCKED
@@ -195,7 +212,7 @@ SET status = 'processing',
 FROM next_item
 WHERE cs.slug = next_item.slug
 RETURNING cs.slug, cs.depth, cs.attempts;
-`).Scan(&item.Slug, &item.Depth, &item.Attempts)
+	`, edgeSource).Scan(&item.Slug, &item.Depth, &item.Attempts)
 	if err == sql.ErrNoRows {
 		if commitErr := tx.Commit(); commitErr != nil {
 			return QueueItem{}, false, commitErr
@@ -210,6 +227,23 @@ RETURNING cs.slug, cs.depth, cs.attempts;
 		return QueueItem{}, false, err
 	}
 	return item, true, nil
+}
+
+func (s *Store) GetProfileCounts(ctx context.Context, slug string) (ProfileCounts, bool, error) {
+	slug = normalizeSlug(slug)
+	var counts ProfileCounts
+	err := s.db.QueryRowContext(ctx, `
+SELECT followers_count, following_count, channels_count
+FROM crawl_profiles
+WHERE slug = $1;
+`, slug).Scan(&counts.Followers, &counts.Following, &counts.Channels)
+	if err == sql.ErrNoRows {
+		return ProfileCounts{}, false, nil
+	}
+	if err != nil {
+		return ProfileCounts{}, false, fmt.Errorf("get profile counts %s: %w", slug, err)
+	}
+	return counts, true, nil
 }
 
 func (s *Store) MarkDone(ctx context.Context, slug string, crawledAt time.Time) error {

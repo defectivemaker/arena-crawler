@@ -28,6 +28,7 @@ type Bio struct {
 }
 
 type User struct {
+	Type   string     `json:"type"`
 	ID     int64      `json:"id"`
 	Slug   string     `json:"slug"`
 	Name   string     `json:"name"`
@@ -35,7 +36,17 @@ type User struct {
 	Counts UserCounts `json:"counts"`
 }
 
-type followersResponse struct {
+type APIError struct {
+	URL        string
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("arena api %s returned %d: %s", e.URL, e.StatusCode, e.Body)
+}
+
+type userListResponse struct {
 	Data []User `json:"data"`
 }
 
@@ -79,25 +90,39 @@ func (c *Client) GetUser(ctx context.Context, slug string) (User, error) {
 	return out, nil
 }
 
-func (c *Client) GetFollowers(ctx context.Context, slug string, perPage int) ([]User, error) {
+func (c *Client) GetFollowers(ctx context.Context, slug string, perPage, maxPages int) ([]User, error) {
+	return c.getUserList(ctx, slug, "followers", perPage, maxPages)
+}
+
+func (c *Client) GetFollowing(ctx context.Context, slug string, perPage, maxPages int) ([]User, error) {
+	return c.getUserList(ctx, slug, "following", perPage, maxPages)
+}
+
+func (c *Client) getUserList(ctx context.Context, slug, relation string, perPage, maxPages int) ([]User, error) {
 	if perPage <= 0 {
 		perPage = 100
 	}
-	followers := make([]User, 0, perPage)
+	if maxPages == 0 {
+		return nil, nil
+	}
+	users := make([]User, 0, perPage)
 
 	page := 1
 	for {
+		if maxPages > 0 && page > maxPages {
+			break
+		}
 		u, err := url.Parse(baseURL)
 		if err != nil {
 			return nil, err
 		}
-		u.Path = path.Join(u.Path, "users", slug, "followers")
+		u.Path = path.Join(u.Path, "users", slug, relation)
 		q := u.Query()
 		q.Set("page", fmt.Sprintf("%d", page))
 		q.Set("per", fmt.Sprintf("%d", perPage))
 		u.RawQuery = q.Encode()
 
-		var payload followersResponse
+		var payload userListResponse
 		if err := c.getJSON(ctx, u.String(), &payload); err != nil {
 			return nil, err
 		}
@@ -105,14 +130,14 @@ func (c *Client) GetFollowers(ctx context.Context, slug string, perPage int) ([]
 			break
 		}
 
-		followers = append(followers, payload.Data...)
+		users = append(users, payload.Data...)
 		if len(payload.Data) < perPage {
 			break
 		}
 		page++
 	}
 
-	return followers, nil
+	return users, nil
 }
 
 func (c *Client) getJSON(ctx context.Context, requestURL string, out any) error {
@@ -152,7 +177,11 @@ func (c *Client) getJSON(ctx context.Context, requestURL string, out any) error 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 			resp.Body.Close()
-			return fmt.Errorf("arena api %s returned %d: %s", requestURL, resp.StatusCode, strings.TrimSpace(string(body)))
+			return &APIError{
+				URL:        requestURL,
+				StatusCode: resp.StatusCode,
+				Body:       strings.TrimSpace(string(body)),
+			}
 		}
 
 		err = json.NewDecoder(resp.Body).Decode(out)

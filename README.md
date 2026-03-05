@@ -3,14 +3,14 @@
 Recursive Are.na follower crawler in Go, optimized for low storage.
 
 It stores only:
-- profile data (`slug`, `name`, `bio.plain`, counts)
+- profile data (`slug`, `name`, `bio`, counts)
 - extracted personal website links from `bio.plain`
 - crawl state for resume/retry/dedup (`crawl_state`)
 
 It does **not** store follower-edge graph rows.
 
 API optimization:
-- follower pages (`/users/{slug}/followers?per=100`) are used as the primary profile source
+- relation pages (`/users/{slug}/following` or `/users/{slug}/followers`) are used as the primary profile source
 - follower user payloads are upserted directly (profile + links)
 - direct `GET /users/{slug}` is used only when a profile is missing/stale
 - this reduces total requests substantially at larger depths
@@ -19,6 +19,10 @@ Built-in rate limiting:
 - global request limiter in code (applies to all API calls)
 - automatic 429 handling via `Retry-After` / `X-RateLimit-Reset`
 - defaults target guest tier safely (`30 req/min`)
+
+Built-in logging:
+- logs are appended to `crawl.log` by default (and also printed to stdout)
+- override with `-log-file <path>`
 
 ## 1) Start Postgres (optional via Docker)
 
@@ -58,8 +62,11 @@ export ARENA_TOKEN='your_arena_bearer_token'
 
 go run ./cmd/crawl \
   -seed leticia-de-cassia \
+  -edge-source auto \
+  -min-relation-count 20 \
   -max-depth -1 \
   -max-users -1 \
+  -max-pages-per-user -1 \
   -request-limit-per-minute 30 \
   -per-page 100
 ```
@@ -71,17 +78,21 @@ go run ./cmd/crawl \
 - `processing` -> currently being processed
 - `done` -> already crawled
 - `failed` -> will retry after `next_retry_at`
-- dequeue priority: lower depth first, then higher `followers_count`, then older queue time
+- dequeue priority: higher expected relation count first, then lower depth, then older queue time
 
 Useful flags:
 - `-max-depth` (default `-1`): follower recursion depth, unlimited when `-1`.
 - `-max-users` (default `-1`): process cap per run, unlimited when `-1`.
+- `-edge-source` (default `auto`): traversal relation (`auto`, `following`, or `followers`).
+- `-min-relation-count` (default `20`): skip relation fetch for low-yield nodes below this count (`0` disables).
+- `-max-pages-per-user` (default `-1`): relation pages fetched per processed user (`-1` unlimited).
 - `-recrawl-after-hours` (default `720`): if `done` is older than this, it can be re-queued.
 - `-retry-delay-minutes` (default `30`): backoff for failures.
 - `-recover-processing-after-minutes` (default `30`): recovers stuck `processing` rows on startup.
 - `-request-limit-per-minute` (default `30`): hard global request budget.
 - `-rate-limit-jitter-ms` (default `200`): jitter added to request pacing/backoff.
 - `-rate-limit-429-max-backoff-sec` (default `70`): max wait per 429 response.
+- `-log-file` (default `crawl.log`): append log target file.
 
 You can run without `-seed` to continue from existing queued work.
 
